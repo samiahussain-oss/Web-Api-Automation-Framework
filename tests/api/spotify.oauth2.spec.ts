@@ -1,49 +1,81 @@
 
 
+
 import { test, expect } from '@playwright/test';
 
-let OAUTH_CONFIG = {
+const OAUTH_CONFIG = {
     tokenURL: 'https://accounts.spotify.com/api/token',
-    clientId: process.env.OAUTH_CLIENT_ID!,
-    clientSecret: process.env.OAUTH_CLIENT_SECRET!,
-    grantType: process.env.GRANT_TYPE!
-}
-
-let accessToken: string;
-
-test.beforeEach('POST -- generate the access token', async ({ request }) => {
-    let response = await request.post(OAUTH_CONFIG.tokenURL, {
-        form: {
-            grant_type: OAUTH_CONFIG.grantType,
-            client_id: OAUTH_CONFIG.clientId,
-            client_secret: OAUTH_CONFIG.clientSecret
-        }
-    });
-    expect(response.status()).toBe(200);
-    let jsonResponse = await response.json();
-    console.log('token api response: ', jsonResponse);
-    accessToken = jsonResponse.access_token;
-    console.log('access token: ', accessToken);
-});
+    clientId: process.env.OAUTH_CLIENT_ID?.trim(),
+    clientSecret: process.env.OAUTH_CLIENT_SECRET?.trim(),
+};
 
 test('get albums data test', async ({ request }) => {
-    //https://api.spotify.com/v1/albums/4aawyAB9vmqN3uQ7FjRGTy
-    let baseURL = 'https://api.spotify.com';
-    let endPointURL = '/v1/albums/4aawyAB9vmqN3uQ7FjRGTy';
 
-    let albumResponse = await request.get(`${baseURL}${endPointURL}`, {
-        headers: {
-            Authorization: `Bearer ${accessToken}`
+    // Step 1: Validate environment variables
+    if (!OAUTH_CONFIG.clientId || !OAUTH_CONFIG.clientSecret) {
+        throw new Error('Spotify OAuth credentials are missing');
+    }
+
+    // Step 2: Generate Basic Authentication
+    const basicAuth = Buffer.from(
+        `${OAUTH_CONFIG.clientId}:${OAUTH_CONFIG.clientSecret}`
+    ).toString('base64');
+
+    // Step 3: Request Spotify access token
+    const tokenResponse = await request.post(
+        OAUTH_CONFIG.tokenURL,
+        {
+            headers: {
+                Authorization: `Basic ${basicAuth}`,
+            },
+            form: {
+                grant_type: 'client_credentials'
+            }
         }
-    });
+    );
+
+    if (!tokenResponse.ok()) {
+        console.error(
+            'Spotify token request failed:',
+            tokenResponse.status(),
+            await tokenResponse.text()
+        );
+    }
+
+    expect(tokenResponse.status()).toBe(200);
+
+    const tokenBody = await tokenResponse.json();
+    const accessToken = tokenBody.access_token;
+
+    expect(accessToken).toBeTruthy();
+
+    // Step 4: Get album data
+    const albumResponse = await request.get(
+        'https://api.spotify.com/v1/albums/4aawyAB9vmqN3uQ7FjRGTy',
+        {
+            headers: {
+                Authorization: `Bearer ${accessToken}`
+            }
+        }
+    );
+
+    if (!albumResponse.ok()) {
+        console.error(
+            'Spotify album request failed:',
+            albumResponse.status(),
+            await albumResponse.text()
+        );
+    }
 
     expect(albumResponse.status()).toBe(200);
-    console.log(await albumResponse.json());
 
-    let jsonBody = await albumResponse.json();
-    console.log(jsonBody.total_tracks);
-    console.log(jsonBody.external_urls.spotify);
-    console.log(jsonBody.images.length);
+    // Step 5: Validate album response
+    const jsonBody = await albumResponse.json();
+
+    console.log('Total tracks:', jsonBody.total_tracks);
+    console.log('Spotify album URL:', jsonBody.external_urls.spotify);
+    console.log('Number of images:', jsonBody.images.length);
+
     expect(jsonBody.images.length).toBe(3);
-})
+});
 
